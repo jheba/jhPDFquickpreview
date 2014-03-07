@@ -101,7 +101,7 @@ class TemplatePdfquickpreviewOperator
     */
     function modify( $tpl, $operatorName, $operatorParameters, $rootNamespace, $currentNamespace, &$operatorValue, $namedParameters, $placement )
     {
-        list( $variant, $width, $height, $pages, $fileExtension ) = $this->obtainSettings( $namedParameters );
+        list( $variant, $width, $height, $pages, $fileExtension, $displayWith ) = $this->obtainSettings( $namedParameters );
 
         switch ( $operatorName )
         {
@@ -140,61 +140,92 @@ class TemplatePdfquickpreviewOperator
                     }
                 }
 
-                $fileDataMap = $object->dataMap();
-                $fileData = $fileDataMap['file'];
-                $fileId = $fileData->ID;
-                $fileVersion = $fileData->Version;
-                $fileLanguageCode = $fileData->LanguageCode;
-                $filePath = $fileData->content()->filePath();
-                $fileOriginalFilename = $fileData->content()->OriginalFilename;
-                $fileMimeType = $fileData->content()->MimeType;
-
-                $output = array();
-                if( $fileMimeType === 'application/pdf' )
+                $ini = eZINI::instance( 'pdfquickpreview.ini' );
+                $ignoreList = $ini->hasVariable( 'PreviewGeneration', 'IgnoreObjects' ) ? $ini->variable( 'PreviewGeneration', 'IgnoreObjects' ) : array();
+                if( in_array( $object->ID, $ignoreList ) )
                 {
-                    if( file_exists( $filePath ) )
-                    {
-                        $imageCacheDirPath = eZSys::cacheDirectory() . '/public/pdfquickpreview/' . $fileId . '-' . $fileVersion . '-' . $fileLanguageCode;
-                        eZDir::mkdir( $imageCacheDirPath, false, true );
-                        $pageFileName = $imageCacheDirPath . '/' . str_replace( '.', '_', $fileOriginalFilename ) . '_' . $variant;
-                        if( !file_exists( $pageFileName . '-0.' . $fileExtension ) )
-                        {
-                            $output[] = $this->convert( $filePath, $pageFileName . '.' . $fileExtension );
-                        }
-                    }
-                    else
-                    {
-                        eZDebug::writeError( 'PDF file ' . $filePath . ' cannot be found', 'pdfquickpreview' );
-                        return false;
-                    }
+                    eZDebug::writeNotice( 'Object ID ' . $object->ID . ' is ignored due to settings in pdfquickpreview.ini', 'pdfquickpreview' );
+                    $operatorValue = $this->render( array( 'extension/jhPDFquickpreview/design/standard/images/unavailable.jpg' ), $displayWith );
+                }
+                else
+                {
+                    $fileDataMap = $object->dataMap();
+                    $fileData = $fileDataMap['file'];
+                    $fileId = $fileData->ID;
+                    $fileVersion = $fileData->Version;
+                    $fileLanguageCode = $fileData->LanguageCode;
+                    $filePath = $fileData->content()->filePath();
+                    $fileOriginalFilename = $fileData->content()->OriginalFilename;
+                    $fileMimeType = $fileData->content()->MimeType;
 
-                    $imageList = array();
-                    foreach( $pages as $page )
+                    $output = array();
+                    if( $fileMimeType === 'application/pdf' )
                     {
-                        $pageFileName = $imageCacheDirPath . '/' . str_replace( '.', '_', $fileOriginalFilename ) . '_' . $variant . '-' . $page . '.' . $fileExtension;
-                        if( file_exists( $pageFileName ) )
+                        if( file_exists( $filePath ) )
                         {
-                            $imageList[] = $pageFileName;
+                            $imageCacheDirPath = eZSys::cacheDirectory() . '/public/pdfquickpreview/' . $fileId . '-' . $fileVersion . '-' . $fileLanguageCode;
+                            eZDir::mkdir( $imageCacheDirPath, false, true );
+                            //$pageFileName = $imageCacheDirPath . '/' . str_replace( '.', '_', $fileOriginalFilename ) . '_' . $variant;
+                            $pageFileName = str_replace( ' ', '-', $imageCacheDirPath . '/' . str_replace( '.', '_', $fileOriginalFilename ) . '_' . $variant );
+                            if( !file_exists( $pageFileName . '-0.' . $fileExtension ) )
+                            {
+                                $output[] = $this->convert( $filePath, $pageFileName . '.' . $fileExtension );
+                            }
                         }
                         else
                         {
-                            eZDebug::writeError( 'File ' . $pageFileName . ' cannot be found', 'jh pdfquickpreview' );
+                            eZDebug::writeError( 'PDF file ' . $filePath . ' cannot be found', 'pdfquickpreview' );
+                            return false;
                         }
+
+                        $imageList = array();
+                        /**
+                         * multipage PDF document converts to list of files FILENAME-0.jpg, FILENAME-1.jpg, etc.
+                         * one page PDF document converts to one file named FILENAME.jpg
+                         */
+                        $pageFileName = str_replace( ' ', '-', $imageCacheDirPath . '/' . str_replace( '.', '_', $fileOriginalFilename ) . '_' . $variant ) . '.' . $fileExtension;
+                        if( !file_exists( $pageFileName ) )
+                        {
+                            foreach( $pages as $page )
+                            {
+                                $pageFileName = str_replace( ' ', '-', $imageCacheDirPath . '/' . str_replace( '.', '_', $fileOriginalFilename ) . '_' . $variant ) . '-' . $page . '.' . $fileExtension;
+                                if( file_exists( $pageFileName ) )
+                                {
+                                    $imageList[] = $pageFileName;
+                                }
+                                else
+                                {
+                                    eZDebug::writeError( 'File ' . $pageFileName . ' cannot be found', 'pdfquickpreview' );
+                                }
+                            }
+                        }
+                        else
+                        {
+                            $imageList[] = $pageFileName;
+                        }
+                        $operatorValue = $this->render( $imageList, $displayWith );
                     }
-                    $operatorValue = $this->render( $imageList );
                 }
             } break;
         }
     }
 
-    private function render( $images, $variant='default' )
+    private function render( $imageList, $displayWith='none' )
     {
-        // TODO: use templates for rendering output
         $output = '';
-
-        foreach( $images as $image )
+        if( $displayWith == 'none' )
         {
-            $output .= '<a href="/' . $image . '" class="fresco" data-fresco-group="unique_name"><img src="/' . $image . '" width="150"/></a>';
+            foreach( $imageList as $image )
+            {
+                $output .= '<a href="/' . $image . '"><img src="/' . $image . '" width="150"/></a>';
+            }
+        }
+        else
+        {
+            include_once( 'kernel/common/template.php' );
+            $tpl = templateInit();
+            $tpl->setVariable( 'image_list', $imageList );
+            $output = $tpl->fetch( 'design:' . $displayWith . '.tpl' );
         }
         return $output;
     }
@@ -220,8 +251,9 @@ class TemplatePdfquickpreviewOperator
         }
         else
         {
-            $command = $executable . ' ' . $pdfFilePath . ' ' . $imageFilePath;
+            $command = $executable . ' -quality 50 ' . $pdfFilePath . ' ' . $imageFilePath;
         }
+        $command = escapeshellcmd( "ionice -c 3 nice -n 19 " . $command );
         $lastLine = system( $command, $retVal );
         eZDebug::writeNotice( $retVal, $command );
         return $command;
@@ -257,8 +289,9 @@ class TemplatePdfquickpreviewOperator
             $pages = $ini->hasVariable( $variant, 'Pages' ) ? $ini->variable( $variant, 'Pages' ) : array();
         }
         $fileExtension = $ini->hasVariable( $variant, 'Extension' ) ? $ini->variable( $variant, 'Extension' ) : 'png';
+        $displayWith = $ini->hasVariable( $variant, 'displayWith' ) ? $ini->variable( $variant, 'displayWith' ) : 'Responsive-Lightbox';
 
-        return array( $variant, $width, $height, $pages, $fileExtension );
+        return array( $variant, $width, $height, $pages, $fileExtension, $displayWith );
     }
 }
 

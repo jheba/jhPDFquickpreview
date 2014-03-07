@@ -1,4 +1,4 @@
 <?php /*
 [TemplateSettings]
-ExtensionAutoloadPath[]=jhpdfquickpreview
+ExtensionAutoloadPath[]=jhPDFquickpreview
 */ ?>
